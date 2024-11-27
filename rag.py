@@ -22,8 +22,13 @@ bnb_config = BitsAndBytesConfig(
 
 model_id = "NCSOFT/Llama-VARCO-8B-Instruct"
 
+# GPU 0번 사용 설정
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-model = AutoModelForCausalLM.from_pretrained(model_id, quantization_config=bnb_config, device_map="auto")
+model = AutoModelForCausalLM.from_pretrained(model_id, quantization_config=bnb_config)
+
+model.to(device)
 
 
 
@@ -34,26 +39,31 @@ text_generation_pipeline = pipeline(
     task="text-generation",
     temperature=0.2,
     return_full_text=False,
-    max_new_tokens=500,
+    max_new_tokens=5,
 )
 
 prompt_template = """
 ### [INST]
-Instruction: You're a patent registration examiner. Based on existing patent registration records and knowledge, provide the outcome of the patent application for the given trademark name.
-Here is context to help:
+Instruction: Review the provided trademark registration records and trademark law case precedents to determine if '{question}' is eligible for trademark registration.
 
+1. **Analyze**: Check for potential conflicts with similar terms in the trademark registration records and examine any precedent cases in the trademark law context provided.
+2. **Apply**: Use the specific legal principles and rulings from the trademark law precedents, considering any relevant factors like distinctiveness, descriptiveness, likelihood of confusion, and prior usage.
+3. **Answer**: Respond with Only "가능" or "불가능" in Korean, and briefly specify any key issue if it affects eligibility.
+
+### Trademark Law Case Precedents
 {context}
 
-### EXISTING PATENT
-Here are the results of previous patent applications. Please refer to them in your response.
-Here is existing patent record table:
+### Trademark Registration Records
+The following records document previous trademark applications. Compare these with the requested term to assess any overlap or conflict.
 
 {patent}
 
 ### QUESTION:
-Is it possible to register {question} as a patent name?
-한글로 답변해줘 
+Can I register trademark name? Identify any issues or conflicts based on the provided legal precedents.
+{question}
 [/INST]
+
+
  """
 
 llm = HuggingFacePipeline(pipeline=text_generation_pipeline)
@@ -80,13 +90,13 @@ from langchain.schema import Document
 import pandas as pd
 
 # Load only specific columns using pandas
-df = pd.read_csv('data.csv', usecols=['등록일자', '상표한글명', '상표영문명', '최종처분코드명'], encoding='utf-8')
+df = pd.read_csv('data.csv', usecols=['등록일자', '상표한글명', '최종처분코드명'], encoding='utf-8')
 
 # Convert each row to a Document object
 documents = [
     Document(
-        page_content=f"등록일자: {row['등록일자']}, 상표한글명: {row['상표한글명']}, 상표영문명: {row['상표영문명']}, 최종처분코드명: {row['최종처분코드명']}",
-        metadata={"등록일자": row['등록일자'], "상표한글명": row['상표한글명'], "상표영문명": row['상표영문명'], "최종처분코드명": row['최종처분코드명']}
+        page_content=f"등록일자: {row['등록일자']}, 상표한글명: {row['상표한글명']}, 최종처분코드명: {row['최종처분코드명']}",
+        metadata={"등록일자": row['등록일자'], "상표한글명": row['상표한글명'], "최종처분코드명": row['최종처분코드명']}
     )
     for _, row in df.iterrows()
 ]
@@ -96,15 +106,19 @@ from langchain.embeddings import HuggingFaceEmbeddings
 
 model_name = "jhgan/ko-sbert-nli"
 encode_kwargs = {'normalize_embeddings': True}
-hf = HuggingFaceEmbeddings(
+hf1 = HuggingFaceEmbeddings(
     model_name=model_name,
     encode_kwargs=encode_kwargs
 )
 
+hf2 = HuggingFaceEmbeddings(
+    model_name=model_name,
+    encode_kwargs=encode_kwargs
+)
 
-db = FAISS.from_documents(texts, hf)
+db = FAISS.from_documents(texts, hf1)
 
-patent = FAISS.from_documents(documents, hf)
+patent = FAISS.from_documents(documents, hf2)
 
 retriever = db.as_retriever(
                             search_type="similarity",
@@ -125,8 +139,24 @@ rag_chain = (
 import warnings
 warnings.filterwarnings('ignore')
 
+import csv
+
+# CSV 파일 열기
+with open("test.csv", mode="r", encoding="utf-8") as file:
+    reader = csv.DictReader(file)  # CSV 읽기 객체 생성
+    i = 0
+    with open("result.txt", mode="w", encoding="utf-8") as txt_file:
+        for row in reader:
+            if i == 3:
+                break
+            question = f"등록하고 싶은 상표한글명은 '{row['상표한글명']}'이야. 출원일자는 {row['상표한글명']}에 하는거야"
+            result = rag_chain.invoke(question)
+            print(result)
+            i += 1
+
+'''
 import torch
 
-result = rag_chain.invoke("현대")
+result = rag_chain.invoke("배달 예스맨")
 print(result)
-
+'''
